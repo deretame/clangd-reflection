@@ -1,0 +1,66 @@
+name: Build Clangd for Debian 11
+
+on: 
+  workflow_dispatch: # 手动触发
+    inputs:
+      target_arch:
+        description: 'Target Architecture (X86 or AArch64)'
+        required: true
+        default: 'X86'
+        type: choice
+        options:
+          - X86
+          - AArch64
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: debian:bullseye  # <--- 关键！强制使用 Debian 11 环境
+
+    steps:
+      - name: Install Basic Dependencies
+        run: |
+          apt-get update
+          apt-get install -y \
+            git build-essential python3 wget ninja-build \
+            libstdc++-10-dev binutils gnupg software-properties-common
+
+      - name: Install Modern CMake (Debian 11 default is too old)
+        run: |
+          wget -qO- https://github.com/Kitware/CMake/releases/download/v3.27.7/cmake-3.27.7-linux-x86_64.tar.gz | tar --strip-components=1 -xz -C /usr/local
+
+      - name: Checkout P2996 Branch
+        uses: actions/checkout@v4
+        with:
+          repository: bloomberg/clang-p2996
+          ref: p2996  # 这是 Bloomberg 维护的反射分支
+          path: llvm-project
+          fetch-depth: 1 # 浅克隆，节省空间
+
+      - name: Configure Build
+        run: |
+          mkdir build
+          # 注意：Host 用 Native 即可，Target 根据你的输入决定
+          cmake -G Ninja -S llvm-project/llvm -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra" \
+            -DLLVM_TARGETS_TO_BUILD="${{ inputs.target_arch }}" \
+            -DLLVM_ENABLE_ASSERTIONS=OFF \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            -DLLVM_INCLUDE_EXAMPLES=OFF \
+            -DLLVM_INCLUDE_BENCHMARKS=OFF \
+            -DCMAKE_CXX_FLAGS="-s" \
+            -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+
+      - name: Build Clangd
+        run: ninja -C build clangd
+
+      - name: Package Artifact
+        run: |
+          tar -czvf clangd-debian11-${{ inputs.target_arch }}.tar.gz -C build/bin clangd
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clangd-debian11-${{ inputs.target_arch }}
+          path: clangd-debian11-${{ inputs.target_arch }}.tar.gz
