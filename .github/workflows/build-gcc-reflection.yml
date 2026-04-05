@@ -3,7 +3,9 @@ name: Build GCC 16 (Reflection) for Debian 11
 on:
   push:
     paths:
-      - '.github/workflows/build-gcc-reflection.yml'
+      - ".github/workflows/build-gcc-reflection.yml"
+  schedule:
+    - cron: "0 9 * * *"
   workflow_dispatch:
 
 jobs:
@@ -13,43 +15,54 @@ jobs:
       image: debian:bullseye
     env:
       INSTALL_DIR: /opt/gcc-p2996
+      XZ_OPT: "-T0"
     steps:
       - name: Install Build Dependencies
         run: |
           apt-get update
-          apt-get install -y git build-essential flex bison \
+          apt-get install -y git build-essential flex bison ccache \
             libgmp-dev libmpfr-dev libmpc-dev libisl-dev libzstd-dev zlib1g-dev xz-utils \
-            ca-certificates wget tar gzip python3
+            ca-certificates tar python3
 
       - name: Checkout GCC Source (Trunk)
         uses: actions/checkout@v4
         with:
           repository: gcc-mirror/gcc
           ref: master
-          path: gcc-src
           fetch-depth: 1
 
-      - name: Download Prerequisites
-        working-directory: gcc-src
-        run: |
-          ./contrib/download_prerequisites
+      - name: Setup ccache
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/ccache
+          key: ${{ runner.os }}-debian11-gcc16-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-debian11-gcc16-
 
       - name: Configure GCC
         run: |
           mkdir -p build
           cd build
-          ../gcc-src/configure \
+          export CFLAGS="-O2 -pipe"
+          export CXXFLAGS="-O2 -pipe"
+
+          ../configure \
             --prefix=${{ env.INSTALL_DIR }} \
             --enable-languages=c,c++ \
             --disable-multilib \
-            --disable-bootstrap \
+            --enable-bootstrap \
             --with-system-zlib \
             --disable-nls
 
-      - name: Build GCC (This takes time)
+      - name: Build GCC
         run: |
           cd build
+          export CC="ccache gcc"
+          export CXX="ccache g++"
+
+          ccache -z
           make -j$(nproc)
+          ccache -s
 
       - name: Install to Output Dir
         run: |
